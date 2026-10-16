@@ -36,6 +36,9 @@ async def run_review(review_id, repo_id, full_name: str, pr_number: int, commit_
         await github.post_review(full_name, pr_number, commit_sha, [c.model_dump() for c in kept])
 
         payload = {
+            "diff": [{"path": f.path,
+                      "lines": [{"type": "add", "n": n, "text": f.added[n]} for n in f.lines[:300]]}
+                     for f in files],
             "comments": [c.model_dump() for c in kept],
             "context": [{"file_path": c["file_path"], "symbol_name": c["symbol_name"],
                          "similarity": float(c["similarity"]), "raw_code": c["raw_code"]} for c in context],

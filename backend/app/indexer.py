@@ -99,24 +99,29 @@ async def index_repo(full_name: str, token: str = "") -> int:
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
-    # content-hash caching: only embed chunks we haven't stored
-    existing = {(r["file_path"], r["content_hash"]) for r in
-                await pool.fetch("SELECT file_path, content_hash FROM code_chunks WHERE repo_id=$1", repo_id)}
-    new = [c for c in chunks if (c.file_path, c.content_hash) not in existing]
-    # drop stale chunks
-    keep = {(c.file_path, c.content_hash) for c in chunks}
-    stale = [k for k in existing if k not in keep]
-    for fp, h in stale:
-        await pool.execute("DELETE FROM code_chunks WHERE repo_id=$1 AND file_path=$2 AND content_hash=$3", repo_id, fp, h)
+    try:
+        # content-hash caching: only embed chunks we haven't stored
+        existing = {(r["file_path"], r["content_hash"]) for r in
+                    await pool.fetch("SELECT file_path, content_hash FROM code_chunks WHERE repo_id=$1", repo_id)}
+        new = [c for c in chunks if (c.file_path, c.content_hash) not in existing]
+        # drop stale chunks
+        keep = {(c.file_path, c.content_hash) for c in chunks}
+        stale = [k for k in existing if k not in keep]
+        for fp, h in stale:
+            await pool.execute("DELETE FROM code_chunks WHERE repo_id=$1 AND file_path=$2 AND content_hash=$3", repo_id, fp, h)
 
-    for i in range(0, len(new), 64):
-        batch = new[i:i + 64]
-        vecs = await embed_texts([f"{c.file_path}\n{c.raw_code}" for c in batch])
-        await pool.executemany(
-            """INSERT INTO code_chunks (repo_id,file_path,symbol_name,start_line,end_line,content_hash,raw_code,embedding)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector) ON CONFLICT DO NOTHING""",
-            [(repo_id, c.file_path, c.symbol_name, c.start_line, c.end_line, c.content_hash, c.raw_code, vec_literal(v))
-             for c, v in zip(batch, vecs)])
+        for i in range(0, len(new), 64):
+            batch = new[i:i + 64]
+            vecs = await embed_texts([f"{c.file_path}\n{c.raw_code}" for c in batch])
+            await pool.executemany(
+                """INSERT INTO code_chunks (repo_id,file_path,symbol_name,start_line,end_line,content_hash,raw_code,embedding)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector) ON CONFLICT DO NOTHING""",
+                [(repo_id, c.file_path, c.symbol_name, c.start_line, c.end_line, c.content_hash, c.raw_code, vec_literal(v))
+                 for c, v in zip(batch, vecs)])
+    except Exception:
+        # e.g. OpenAI quota/rate-limit errors: don't leave the repo stuck on INDEXING
+        await pool.execute("UPDATE repositories SET index_status='FAILED' WHERE id=$1", repo_id)
+        raise
     total = await pool.fetchval("SELECT count(*) FROM code_chunks WHERE repo_id=$1", repo_id)
     await pool.execute("UPDATE repositories SET index_status='READY', total_chunks=$2 WHERE id=$1", repo_id, total)
     return total

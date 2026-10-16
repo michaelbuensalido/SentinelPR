@@ -25,6 +25,7 @@ export interface DiffFile {
 export interface Review {
   id: string;
   pr_number: number;
+  commit_sha?: string;
   title: string;
   status: JobStatus;
   latency_ms: number;
