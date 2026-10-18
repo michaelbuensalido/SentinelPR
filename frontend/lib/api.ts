@@ -1,4 +1,4 @@
-import type { Comment, ContextChunk, DiffFile, JobStatus, Repo, Review } from "./demo";
+import type { AstChunk, Comment, ContextChunk, DiffFile, JobStatus, Repo, Review } from "./demo";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -23,6 +23,7 @@ interface ApiRepo {
   index_status: string;
   total_chunks: number;
 }
+
 interface ApiReview {
   id: string;
   full_name: string;
@@ -32,6 +33,14 @@ interface ApiReview {
   latency_ms: number | null;
   tokens: number | null;
   result: { diff?: DiffFile[]; comments?: Comment[]; context?: ContextChunk[] } | null;
+}
+
+export interface GitHubPullBrief {
+  number: number;
+  title: string;
+  sha: string;
+  author: string;
+  branch: string;
 }
 
 export async function health(): Promise<boolean> {
@@ -73,10 +82,18 @@ export async function loadLive(): Promise<Repo[]> {
 export const indexRepo = (full_name: string) =>
   request<{ status: string }>("/api/v1/repos/index", { method: "POST", body: JSON.stringify({ full_name }) });
 
-export const startReview = (full_name: string, pr_number: number, commit_sha: string) =>
+export const deleteRepo = (full_name: string) =>
+  request<{ status: string }>(`/api/v1/repos/${full_name}`, { method: "DELETE" });
+
+export const fetchRepoChunks = (full_name: string, q?: string) => {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  return request<AstChunk[]>(`/api/v1/repos/${full_name}/chunks${qs}`);
+};
+
+export const startReview = (full_name: string, pr_number: number, commit_sha: string, force = false) =>
   request<{ status: string; review_id?: string }>("/api/v1/reviews", {
     method: "POST",
-    body: JSON.stringify({ full_name, pr_number, commit_sha }),
+    body: JSON.stringify({ full_name, pr_number, commit_sha, force }),
   });
 
 /** Look up a PR's head commit via GitHub's public API (works for public repos). */
@@ -85,4 +102,23 @@ export async function resolveHeadSha(full_name: string, pr: number): Promise<str
   if (res.status === 404) throw new Error(`PR #${pr} not found in ${full_name} (or the repo is private)`);
   if (!res.ok) throw new Error(`GitHub lookup failed (${res.status}). Paste the commit SHA manually.`);
   return (await res.json()).head.sha as string;
+}
+
+/** Discover open PRs on GitHub for one-click review selection. */
+export async function fetchOpenGitHubPRs(full_name: string): Promise<GitHubPullBrief[]> {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${full_name}/pulls?state=open&per_page=8`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    return data.map((p: Record<string, any>) => ({
+      number: p.number,
+      title: p.title,
+      sha: p.head?.sha ?? "",
+      author: p.user?.login ?? "unknown",
+      branch: p.head?.ref ?? "feature",
+    }));
+  } catch {
+    return [];
+  }
 }
