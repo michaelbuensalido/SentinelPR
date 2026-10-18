@@ -2,11 +2,11 @@
 
 import { JobStatus } from "@/lib/demo";
 
-export const STEPS: { key: JobStatus; label: string }[] = [
-  { key: "QUEUED", label: "Queued" },
-  { key: "RETRIEVING_CONTEXT", label: "Retrieving Context" },
-  { key: "ANALYZING", label: "Analyzing Diff" },
-  { key: "COMPLETED", label: "Review Completed" },
+export const STEPS: { key: JobStatus; label: string; sub: string }[] = [
+  { key: "QUEUED", label: "Queued", sub: "Idempotency lock acquired" },
+  { key: "RETRIEVING_CONTEXT", label: "Retrieving Context", sub: "pgvector HNSW cosine search" },
+  { key: "ANALYZING", label: "Analyzing Diff", sub: "Cross-file AST verification" },
+  { key: "COMPLETED", label: "Review Completed", sub: "Filtered ≥ 80% confidence" },
 ];
 
 export function Stepper({ status }: { status: JobStatus }) {
@@ -14,25 +14,26 @@ export function Stepper({ status }: { status: JobStatus }) {
   const currentIndex = STEPS.findIndex((s) => s.key === status);
 
   return (
-    <nav aria-label="Review Progress" className="w-full">
-      <ol className="flex flex-wrap items-center gap-2">
+    <nav aria-label="Review Pipeline Progress" className="w-full min-w-0">
+      <ol className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {STEPS.map((s, i) => {
           const isDone = !failed && (i < currentIndex || status === "COMPLETED");
           const isActive = !failed && i === currentIndex && status !== "COMPLETED";
 
           return (
-            <li key={s.key} className="flex items-center gap-2">
-              <div
-                className={`flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium tracking-tight transition-all duration-200 ${
-                  isDone
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 shadow-[inset_0_1px_1px_rgba(16,185,129,0.1)]"
-                    : isActive
-                    ? "border-indigo-500/50 bg-indigo-500/20 text-indigo-100 shadow-[0_0_16px_rgba(99,102,241,0.25)]"
-                    : "border-white/[0.06] bg-white/[0.02] text-slate-500"
-                }`}
-              >
+            <li
+              key={s.key}
+              className={`relative flex items-center gap-2.5 rounded-lg border px-3 py-2 transition-[background-color,border-color,color,box-shadow] duration-200 ${
+                isDone
+                  ? "border-emerald-500/25 bg-emerald-500/[0.06] text-emerald-200 shadow-[inset_0_1px_0_rgba(16,185,129,0.12)]"
+                  : isActive
+                  ? "border-indigo-500/50 bg-indigo-500/[0.12] text-white shadow-[0_0_20px_-4px_rgba(99,102,241,0.3)]"
+                  : "border-white/[0.05] bg-white/[0.015] text-slate-500"
+              }`}
+            >
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/40 font-mono text-[10px]">
                 {isDone ? (
-                  <svg className="h-3 w-3 text-emerald-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg className="h-3 w-3 text-emerald-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2">
                     <path d="M2.5 6L5 8.5L9.5 3.5" />
                   </svg>
                 ) : isActive ? (
@@ -41,32 +42,26 @@ export function Stepper({ status }: { status: JobStatus }) {
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-400" />
                   </span>
                 ) : (
-                  <span className="h-1.5 w-1.5 rounded-full bg-slate-700" />
+                  <span className="text-slate-600 tabular-nums">{i + 1}</span>
                 )}
-                <span>{s.label}</span>
               </div>
-              {i < STEPS.length - 1 && (
-                <div
-                  className={`h-[1px] w-5 transition-colors duration-200 ${
-                    isDone ? "bg-emerald-500/40" : "bg-white/10"
-                  }`}
-                />
-              )}
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-semibold tracking-tight">{s.label}</div>
+                <div className="truncate font-mono text-[10px] text-slate-500">{s.sub}</div>
+              </div>
             </li>
           );
         })}
-
-        {failed && (
-          <li className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-3.5 py-1.5 text-xs font-medium text-rose-300">
-              <svg className="h-3 w-3 text-rose-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 3l6 6M9 3L3 9" />
-              </svg>
-              Execution Halted
-            </span>
-          </li>
-        )}
       </ol>
+
+      {failed && (
+        <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-300">
+          <svg className="h-3.5 w-3.5 shrink-0 text-rose-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 3l6 6M9 3L3 9" />
+          </svg>
+          <span>Pipeline execution halted during worker stage. You can re-run this review at any time.</span>
+        </div>
+      )}
     </nav>
   );
 }
@@ -131,7 +126,7 @@ export function StatusBadge({ status }: { status: string }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[10px] font-medium tracking-tight ${c.bg} ${c.text} ${c.border}`}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[10px] font-medium tracking-tight ${c.bg} ${c.text} ${c.border}`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${c.dot} ${c.pulse ? "animate-pulse" : ""}`} />
       <span>{status.replace(/_/g, " ")}</span>

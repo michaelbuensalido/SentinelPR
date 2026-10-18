@@ -34,13 +34,15 @@ async def health():
     return {"status": "ok"}
 
 
-async def enqueue_review(full_name: str, pr_number: int, sha: str) -> dict:
+async def enqueue_review(full_name: str, pr_number: int, sha: str, force: bool = False) -> dict:
     """Idempotent enqueue guarded by review_lock:{repo_id}:{sha}."""
     pool = await get_pool()
     repo = await pool.fetchrow("SELECT id FROM repositories WHERE full_name=$1", full_name)
     if not repo:
         raise HTTPException(404, "repository not indexed")
     lock = f"review_lock:{repo['id']}:{sha}"
+    if force:
+        await app.state.queue.delete(lock)
     if not await app.state.queue.set(lock, "1", ex=3600, nx=True):
         return {"status": "duplicate"}
     review_id = await pool.fetchval(
@@ -70,11 +72,12 @@ class ManualReview(BaseModel):
     full_name: str
     pr_number: int
     commit_sha: str
+    force: bool = False
 
 
 @app.post("/api/v1/reviews", status_code=202)
 async def manual_review(req: ManualReview):
-    return await enqueue_review(req.full_name, req.pr_number, req.commit_sha)
+    return await enqueue_review(req.full_name, req.pr_number, req.commit_sha, force=req.force)
 
 
 class IndexReq(BaseModel):
@@ -94,6 +97,28 @@ async def repos():
     return [dict(r) for r in rows]
 
 
+@app.delete("/api/v1/repos/{owner}/{repo}")
+async def delete_repo(owner: str, repo: str):
+    full_name = f"{owner}/{repo}"
+    pool = await get_pool()
+    await pool.execute("DELETE FROM repositories WHERE full_name=$1", full_name)
+    return {"status": "deleted", "full_name": full_name}
+
+
+@app.get("/api/v1/repos/{owner}/{repo}/chunks")
+async def repo_chunks(owner: str, repo: str, q: str | None = None):
+    full_name = f"{owner}/{repo}"
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """SELECT c.id::text, c.file_path, c.symbol_name, c.start_line, c.end_line, c.content_hash, c.raw_code
+           FROM code_chunks c JOIN repositories r ON r.id=c.repo_id
+           WHERE r.full_name=$1
+             AND ($2::text IS NULL OR c.file_path ILIKE '%' || $2 || '%' OR COALESCE(c.symbol_name, '') ILIKE '%' || $2 || '%')
+           ORDER BY c.file_path, c.start_line LIMIT 150""",
+        full_name, q)
+    return [dict(r) for r in rows]
+
+
 @app.get("/api/v1/reviews")
 async def reviews(repo: str | None = None):
     pool = await get_pool()
@@ -102,3 +127,4 @@ async def reviews(repo: str | None = None):
            FROM pr_reviews p JOIN repositories r ON r.id=p.repo_id
            WHERE ($1::text IS NULL OR r.full_name=$1) ORDER BY p.id DESC LIMIT 50""", repo)
     return [{**dict(r), "result": json.loads(r["result"]) if r["result"] else None} for r in rows]
+
