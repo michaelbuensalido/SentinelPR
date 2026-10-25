@@ -28,3 +28,8 @@ pgdata/
 *.swo
 .vscode/
 .idea/
+
+# Agent / Assistant Tooling
+.agents/
+.aider-desk/
+.claude/
