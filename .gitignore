@@ -33,3 +33,4 @@ pgdata/
 .agents/
 .aider-desk/
 .claude/
+.skills-lock.*
